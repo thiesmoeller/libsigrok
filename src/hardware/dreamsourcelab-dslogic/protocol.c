@@ -249,6 +249,8 @@ SR_PRIV int dslogic_fpga_firmware_upload(const struct sr_dev_inst *sdi)
 		name = DSLOGIC_PLUS_FPGA_FIRMWARE;
 	} else if (!strcmp(devc->profile->model, "DSLogic Basic")){
 		name = DSLOGIC_BASIC_FPGA_FIRMWARE;
+	} else if (!strcmp(devc->profile->model, "DSLogic U2Basic")) {
+		name = DSLOGIC_U2BASIC_FPGA_FIRMWARE;
 	} else if (!strcmp(devc->profile->model, "DSCope")) {
 		name = DSCOPE_FPGA_FIRMWARE;
 	} else {
