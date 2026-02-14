@@ -362,8 +362,15 @@ static int dev_open(struct sr_dev_inst *sdi)
 	}
 
 
-	if ((ret = dslogic_fpga_firmware_upload(sdi)) != SR_OK)
-		return ret;
+	/*
+	 * U2Basic devices using the "DSL Instrument v2" firmware path reject
+	 * the legacy DS_CMD_CONFIG FPGA upload command. Keep their current FPGA
+	 * configuration instead of failing open here.
+	 */
+	if (strcmp(devc->profile->model, "DSLogic U2Basic") != 0) {
+		if ((ret = dslogic_fpga_firmware_upload(sdi)) != SR_OK)
+			return ret;
+	}
 
 	if (devc->cur_samplerate == 0) {
 		/* Samplerate hasn't been set; default to the slowest one. */
@@ -372,7 +379,8 @@ static int dev_open(struct sr_dev_inst *sdi)
 
 	if (devc->cur_threshold == 0.0) {
 		devc->cur_threshold = thresholds[1][0];
-		return dslogic_set_voltage_threshold(sdi, devc->cur_threshold);
+		if (strcmp(devc->profile->model, "DSLogic U2Basic") != 0)
+			return dslogic_set_voltage_threshold(sdi, devc->cur_threshold);
 	}
 
 	return SR_OK;
@@ -494,6 +502,8 @@ static int config_set(uint32_t key, GVariant *data,
 			return dslogic_fpga_firmware_upload(sdi);
 		} else {
 			g_variant_get(data, "(dd)", &low, &high);
+			if (!strcmp(devc->profile->model, "DSLogic U2Basic"))
+				return SR_OK;
 			return dslogic_set_voltage_threshold(sdi, (low + high) / 2.0);
 		}
 		break;

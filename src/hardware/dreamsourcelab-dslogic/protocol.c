@@ -38,6 +38,7 @@
 #define DS_CMD_RD_NVM			0xba
 #define DS_CMD_RD_NVM_PRE		0xbb
 #define DS_CMD_GET_HW_INFO		0xbc
+#define DSL_CMD_CTL_WR			0xb0
 
 #define DS_START_FLAGS_STOP		(1 << 7)
 #define DS_START_FLAGS_CLK_48MHZ	(1 << 6)
@@ -70,6 +71,9 @@
 
 #define DSLOGIC_ATOMIC_SAMPLES		(sizeof(uint64_t) * 8)
 #define DSLOGIC_ATOMIC_BYTES		sizeof(uint64_t)
+
+#define DSL_CTL_START			8
+#define DSL_CTL_STOP			9
 
 /*
  * The FPGA is configured with TLV tuples. Length is specified as the
@@ -127,6 +131,12 @@ struct fpga_config {
 	uint32_t trig_count[NUM_TRIGGER_STAGES];
 
 	uint32_t end_sync;
+};
+
+struct dsl_ctl_header {
+	uint8_t dest;
+	uint16_t offset;
+	uint8_t size;
 };
 
 #pragma pack(pop)
@@ -218,6 +228,35 @@ static int command_stop_acquisition(const struct sr_dev_inst *sdi)
 	}
 
 	return SR_OK;
+}
+
+static int command_ctl_wr_simple(libusb_device_handle *devhdl, uint8_t dest)
+{
+	struct dsl_ctl_header cmd = { .dest = dest, .offset = 0, .size = 0 };
+	int ret;
+
+	ret = libusb_control_transfer(devhdl, LIBUSB_REQUEST_TYPE_VENDOR |
+		LIBUSB_ENDPOINT_OUT, DSL_CMD_CTL_WR, 0x0000, 0x0000,
+		(unsigned char *)&cmd, sizeof(cmd), USB_TIMEOUT);
+	if (ret < 0) {
+		sr_err("Unable to send DSL_CMD_CTL_WR command(dest:%u): %s.",
+			dest, libusb_error_name(ret));
+		return SR_ERR;
+	}
+
+	return SR_OK;
+}
+
+static int command_start_acquisition_v2(const struct sr_dev_inst *sdi)
+{
+	const struct sr_usb_dev_inst *usb = sdi->conn;
+	return command_ctl_wr_simple(usb->devhdl, DSL_CTL_START);
+}
+
+static int command_stop_acquisition_v2(const struct sr_dev_inst *sdi)
+{
+	const struct sr_usb_dev_inst *usb = sdi->conn;
+	return command_ctl_wr_simple(usb->devhdl, DSL_CTL_STOP);
 }
 
 SR_PRIV int dslogic_fpga_firmware_upload(const struct sr_dev_inst *sdi)
@@ -620,7 +659,19 @@ SR_PRIV int dslogic_dev_open(struct sr_dev_inst *sdi, struct sr_dev_driver *di)
 		 * bail out if we encounter an incompatible version.
 		 * Different minor versions are OK, they should be compatible.
 		 */
-		if (vi.major != DSLOGIC_REQUIRED_VERSION_MAJOR) {
+		if (!strcmp(devc->profile->model, "DSLogic U2Basic")) {
+			/*
+			 * Newer U2Basic devices may report 2.x firmware,
+			 * while some revisions return 0.0 on the legacy
+			 * version request but still accept capture commands.
+			 */
+			if (vi.major != 0 && vi.major != 2) {
+				sr_err("Expected firmware version 2.x (or legacy 0.x) for %s, "
+				       "got %d.%d.", devc->profile->model, vi.major, vi.minor);
+				ret = SR_ERR;
+				break;
+			}
+		} else if (vi.major != DSLOGIC_REQUIRED_VERSION_MAJOR) {
 			sr_err("Expected firmware version %d.x, "
 			       "got %d.%d.", DSLOGIC_REQUIRED_VERSION_MAJOR,
 			       vi.major, vi.minor);
@@ -1052,6 +1103,15 @@ SR_PRIV int dslogic_acquisition_start(const struct sr_dev_inst *sdi)
 
 	usb_source_add(sdi->session, devc->ctx, timeout, receive_data, drvc);
 
+	if (!strcmp(devc->profile->model, "DSLogic U2Basic")) {
+		/* U2Basic v2 firmware uses DSL CTL transport for run control. */
+		if ((ret = command_stop_acquisition_v2(sdi)) != SR_OK)
+			return ret;
+		if ((ret = command_start_acquisition_v2(sdi)) != SR_OK)
+			return ret;
+		return start_transfers(sdi);
+	}
+
 	if ((ret = command_stop_acquisition(sdi)) != SR_OK)
 		return ret;
 
@@ -1088,7 +1148,12 @@ SR_PRIV int dslogic_acquisition_start(const struct sr_dev_inst *sdi)
 
 SR_PRIV int dslogic_acquisition_stop(struct sr_dev_inst *sdi)
 {
-	command_stop_acquisition(sdi);
+	struct dev_context *devc = sdi->priv;
+
+	if (devc && devc->profile && !strcmp(devc->profile->model, "DSLogic U2Basic"))
+		command_stop_acquisition_v2(sdi);
+	else
+		command_stop_acquisition(sdi);
 	abort_acquisition(sdi->priv);
 	return SR_OK;
 }
