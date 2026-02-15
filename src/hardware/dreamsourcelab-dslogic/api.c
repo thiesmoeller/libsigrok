@@ -363,9 +363,9 @@ static int dev_open(struct sr_dev_inst *sdi)
 
 
 	/*
-	 * U2Basic devices using the "DSL Instrument v2" firmware path reject
-	 * the legacy DS_CMD_CONFIG FPGA upload command. Keep their current FPGA
-	 * configuration instead of failing open here.
+	 * For U2Basic, keep the device's existing FPGA state.
+	 * Only use the legacy FPGA upload path for devices that already
+	 * support it in upstream sigrok.
 	 */
 	if (strcmp(devc->profile->model, "DSLogic U2Basic") != 0) {
 		if ((ret = dslogic_fpga_firmware_upload(sdi)) != SR_OK)

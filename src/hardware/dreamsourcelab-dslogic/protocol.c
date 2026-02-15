@@ -39,6 +39,8 @@
 #define DS_CMD_RD_NVM_PRE		0xbb
 #define DS_CMD_GET_HW_INFO		0xbc
 #define DSL_CMD_CTL_WR			0xb0
+#define DSL_CMD_CTL_RD_PRE		0xb1
+#define DSL_CMD_CTL_RD			0xb2
 
 #define DS_START_FLAGS_STOP		(1 << 7)
 #define DS_START_FLAGS_CLK_48MHZ	(1 << 6)
@@ -72,9 +74,11 @@
 #define DSLOGIC_ATOMIC_SAMPLES		(sizeof(uint64_t) * 8)
 #define DSLOGIC_ATOMIC_BYTES		sizeof(uint64_t)
 
-#define DSL_CTL_FW_VERSION		0
 #define DSL_CTL_START			8
 #define DSL_CTL_STOP			9
+#define DSL_CTL_BULK_WR			10
+#define DSL_CTL_FW_VERSION		0
+#define DSL_CTL_HW_STATUS		2
 
 /*
  * The FPGA is configured with TLV tuples. Length is specified as the
@@ -259,6 +263,35 @@ static int command_ctl_wr_simple(libusb_device_handle *devhdl, uint8_t dest)
 		(unsigned char *)&cmd, sizeof(cmd), USB_TIMEOUT);
 	if (ret < 0) {
 		sr_err("Unable to send DSL_CMD_CTL_WR command(dest:%u): %s.",
+			dest, libusb_error_name(ret));
+		return SR_ERR;
+	}
+
+	return SR_OK;
+}
+
+static int command_ctl_rd_data(libusb_device_handle *devhdl, uint8_t dest,
+		uint8_t *data, uint8_t size)
+{
+	struct dsl_ctl_header cmd = { .dest = dest, .offset = 0, .size = size };
+	int ret;
+
+	ret = libusb_control_transfer(devhdl, LIBUSB_REQUEST_TYPE_VENDOR |
+		LIBUSB_ENDPOINT_OUT, DSL_CMD_CTL_RD_PRE, 0x0000, 0x0000,
+		(unsigned char *)&cmd, sizeof(cmd), USB_TIMEOUT);
+	if (ret < 0) {
+		sr_err("Unable to send DSL_CMD_CTL_RD_PRE command(dest:%u): %s.",
+			dest, libusb_error_name(ret));
+		return SR_ERR;
+	}
+
+	g_usleep(10 * 1000);
+
+	ret = libusb_control_transfer(devhdl, LIBUSB_REQUEST_TYPE_VENDOR |
+		LIBUSB_ENDPOINT_IN, DSL_CMD_CTL_RD, 0x0000, 0x0000,
+		data, size, USB_TIMEOUT);
+	if (ret < 0) {
+		sr_err("Unable to send DSL_CMD_CTL_RD command(dest:%u): %s.",
 			dest, libusb_error_name(ret));
 		return SR_ERR;
 	}
@@ -867,8 +900,13 @@ static void LIBUSB_CALL receive_transfer(struct libusb_transfer *transfer)
 		return;
 	}
 
-	sr_dbg("receive_transfer(): status %s received %d bytes.",
-		libusb_error_name(transfer->status), transfer->actual_length);
+	if (transfer->status == LIBUSB_TRANSFER_TIMED_OUT &&
+			transfer->actual_length == 0) {
+		sr_spew("receive_transfer(): timeout with no data.");
+	} else {
+		sr_dbg("receive_transfer(): status %s received %d bytes.",
+			libusb_error_name(transfer->status), transfer->actual_length);
+	}
 
 	/* Save incoming transfer before reusing the transfer struct. */
 
