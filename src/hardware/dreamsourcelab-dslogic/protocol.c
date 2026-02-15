@@ -297,6 +297,33 @@ static int command_ctl_wr_reg_byte(libusb_device_handle *devhdl, uint8_t dest,
 	return SR_OK;
 }
 
+static int command_ctl_wr_bulk_words(libusb_device_handle *devhdl, uint32_t words)
+{
+	struct {
+		struct dsl_ctl_header h;
+		uint8_t data[3];
+	} cmd = { 0 };
+	int ret;
+
+	cmd.h.dest = DSL_CTL_BULK_WR;
+	cmd.h.offset = 0;
+	cmd.h.size = 3;
+	cmd.data[0] = (uint8_t)(words & 0xff);
+	cmd.data[1] = (uint8_t)((words >> 8) & 0xff);
+	cmd.data[2] = (uint8_t)((words >> 16) & 0xff);
+
+	ret = libusb_control_transfer(devhdl, LIBUSB_REQUEST_TYPE_VENDOR |
+		LIBUSB_ENDPOINT_OUT, DSL_CMD_CTL_WR, 0x0000, 0x0000,
+		(unsigned char *)&cmd, sizeof(cmd), USB_TIMEOUT);
+	if (ret < 0) {
+		sr_err("Unable to send DSL_CTL_BULK_WR command: %s.",
+			libusb_error_name(ret));
+		return SR_ERR;
+	}
+
+	return SR_OK;
+}
+
 static int command_ctl_rd_data(libusb_device_handle *devhdl, uint8_t dest,
 		uint8_t *data, uint8_t size)
 {
@@ -571,13 +598,19 @@ static int fpga_configure(const struct sr_dev_inst *sdi)
 	c[1] = (len >> 8) & 0xff;
 	c[2] = (len >> 16) & 0xff;
 
-	ret = libusb_control_transfer(usb->devhdl, LIBUSB_REQUEST_TYPE_VENDOR |
-			LIBUSB_ENDPOINT_OUT, DS_CMD_SETTING, 0x0000, 0x0000,
-			c, sizeof(c), USB_TIMEOUT);
-	if (ret < 0) {
-		sr_err("Failed to send FPGA configure command: %s.",
-			libusb_error_name(ret));
-		return SR_ERR;
+	if (!strcmp(devc->profile->model, "DSLogic U2Basic")) {
+		ret = command_ctl_wr_bulk_words(usb->devhdl, len);
+		if (ret != SR_OK)
+			return ret;
+	} else {
+		ret = libusb_control_transfer(usb->devhdl, LIBUSB_REQUEST_TYPE_VENDOR |
+				LIBUSB_ENDPOINT_OUT, DS_CMD_SETTING, 0x0000, 0x0000,
+				c, sizeof(c), USB_TIMEOUT);
+		if (ret < 0) {
+			sr_err("Failed to send FPGA configure command: %s.",
+				libusb_error_name(ret));
+			return SR_ERR;
+		}
 	}
 
 	if (set_trigger(sdi, &cfg))
@@ -830,7 +863,10 @@ static void finish_acquisition(struct sr_dev_inst *sdi)
 
 	devc->num_transfers = 0;
 	g_free(devc->transfers);
+	devc->transfers = NULL;
 	g_free(devc->deinterleave_buffer);
+	devc->deinterleave_buffer = NULL;
+	devc->submitted_transfers = 0;
 }
 
 static void free_transfer(struct libusb_transfer *transfer)
@@ -838,6 +874,7 @@ static void free_transfer(struct libusb_transfer *transfer)
 	struct sr_dev_inst *sdi;
 	struct dev_context *devc;
 	unsigned int i;
+	gboolean removed = FALSE;
 
 	sdi = transfer->user_data;
 	devc = sdi->priv;
@@ -849,12 +886,14 @@ static void free_transfer(struct libusb_transfer *transfer)
 	for (i = 0; i < devc->num_transfers; i++) {
 		if (devc->transfers[i] == transfer) {
 			devc->transfers[i] = NULL;
+			removed = TRUE;
 			break;
 		}
 	}
 
-	devc->submitted_transfers--;
-	if (devc->submitted_transfers == 0)
+	if (removed && devc->submitted_transfers > 0)
+		devc->submitted_transfers--;
+	if (removed && devc->submitted_transfers == 0)
 		finish_acquisition(sdi);
 }
 
@@ -1204,6 +1243,12 @@ SR_PRIV int dslogic_acquisition_start(const struct sr_dev_inst *sdi)
 	if (!strcmp(devc->profile->model, "DSLogic U2Basic")) {
 		/* U2Basic v2 firmware uses DSL CTL transport for run control. */
 		if ((ret = command_stop_acquisition_v2(sdi)) != SR_OK)
+			return ret;
+		/*
+		 * Ensure normal capture mode is explicitly armed for each run.
+		 * Without this, some devices can stay in stale/test-like output.
+		 */
+		if ((ret = fpga_configure(sdi)) != SR_OK)
 			return ret;
 		if ((ret = command_start_acquisition_v2(sdi)) != SR_OK)
 			return ret;
