@@ -77,6 +77,7 @@
 #define DSL_CTL_START			8
 #define DSL_CTL_STOP			9
 #define DSL_CTL_BULK_WR			10
+#define DSL_CTL_I2C_REG			14
 #define DSL_CTL_FW_VERSION		0
 #define DSL_CTL_HW_STATUS		2
 
@@ -264,6 +265,32 @@ static int command_ctl_wr_simple(libusb_device_handle *devhdl, uint8_t dest)
 	if (ret < 0) {
 		sr_err("Unable to send DSL_CMD_CTL_WR command(dest:%u): %s.",
 			dest, libusb_error_name(ret));
+		return SR_ERR;
+	}
+
+	return SR_OK;
+}
+
+static int command_ctl_wr_reg_byte(libusb_device_handle *devhdl, uint8_t dest,
+		uint16_t offset, uint8_t value)
+{
+	struct {
+		struct dsl_ctl_header h;
+		uint8_t data[1];
+	} cmd = { 0 };
+	int ret;
+
+	cmd.h.dest = dest;
+	cmd.h.offset = offset;
+	cmd.h.size = 1;
+	cmd.data[0] = value;
+
+	ret = libusb_control_transfer(devhdl, LIBUSB_REQUEST_TYPE_VENDOR |
+		LIBUSB_ENDPOINT_OUT, DSL_CMD_CTL_WR, 0x0000, 0x0000,
+		(unsigned char *)&cmd, sizeof(cmd), USB_TIMEOUT);
+	if (ret < 0) {
+		sr_err("Unable to send DSL_CMD_CTL_WR command(dest:%u, off:%u): %s.",
+			dest, offset, libusb_error_name(ret));
 		return SR_ERR;
 	}
 
@@ -609,6 +636,15 @@ SR_PRIV int dslogic_set_voltage_threshold(const struct sr_dev_inst *sdi, double 
 	const struct sr_usb_dev_inst *const usb = sdi->conn;
 	const uint8_t value = (threshold / 5.0) * 255;
 	const uint16_t cmd = value | (DS_ADDR_VTH << 8);
+
+	if (!strcmp(devc->profile->model, "DSLogic U2Basic")) {
+		ret = command_ctl_wr_reg_byte(usb->devhdl, DSL_CTL_I2C_REG,
+				DS_ADDR_VTH, value);
+		if (ret != SR_OK)
+			return ret;
+		devc->cur_threshold = threshold;
+		return SR_OK;
+	}
 
 	/* Send the control command. */
 	ret = libusb_control_transfer(usb->devhdl,

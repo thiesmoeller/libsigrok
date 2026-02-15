@@ -502,8 +502,6 @@ static int config_set(uint32_t key, GVariant *data,
 			return dslogic_fpga_firmware_upload(sdi);
 		} else {
 			g_variant_get(data, "(dd)", &low, &high);
-			if (!strcmp(devc->profile->model, "DSLogic U2Basic"))
-				return SR_OK;
 			return dslogic_set_voltage_threshold(sdi, (low + high) / 2.0);
 		}
 		break;
