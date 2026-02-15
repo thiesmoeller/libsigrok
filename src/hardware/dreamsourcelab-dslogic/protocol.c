@@ -72,6 +72,7 @@
 #define DSLOGIC_ATOMIC_SAMPLES		(sizeof(uint64_t) * 8)
 #define DSLOGIC_ATOMIC_BYTES		sizeof(uint64_t)
 
+#define DSL_CTL_FW_VERSION		0
 #define DSL_CTL_START			8
 #define DSL_CTL_STOP			9
 
@@ -152,6 +153,9 @@ struct dsl_ctl_header {
 
 #define USB_TIMEOUT (3 * 1000)
 
+static int command_ctl_rd_data(libusb_device_handle *devhdl, uint8_t dest,
+			       uint8_t *buf, uint8_t size);
+
 static int command_get_fw_version(libusb_device_handle *devhdl,
 				  struct version_info *vi)
 {
@@ -167,6 +171,21 @@ static int command_get_fw_version(libusb_device_handle *devhdl,
 		return SR_ERR;
 	}
 
+	return SR_OK;
+}
+
+static int command_get_fw_version_v2(libusb_device_handle *devhdl,
+				  struct version_info *vi)
+{
+	uint8_t data[2] = { 0, 0 };
+	int ret;
+
+	ret = command_ctl_rd_data(devhdl, DSL_CTL_FW_VERSION, data, sizeof(data));
+	if (ret != SR_OK)
+		return ret;
+
+	vi->major = data[0];
+	vi->minor = data[1];
 	return SR_OK;
 }
 
@@ -642,7 +661,14 @@ SR_PRIV int dslogic_dev_open(struct sr_dev_inst *sdi, struct sr_dev_driver *di)
 			}
 		}
 
-		ret = command_get_fw_version(usb->devhdl, &vi);
+		if (!strcmp(devc->profile->model, "DSLogic U2Basic")) {
+			ret = command_get_fw_version_v2(usb->devhdl, &vi);
+			if (ret != SR_OK)
+				/* Fallback for early/legacy variants. */
+				ret = command_get_fw_version(usb->devhdl, &vi);
+		} else {
+			ret = command_get_fw_version(usb->devhdl, &vi);
+		}
 		if (ret != SR_OK) {
 			sr_err("Failed to get firmware version.");
 			break;
