@@ -362,12 +362,12 @@ static int dev_open(struct sr_dev_inst *sdi)
 	}
 
 
-	/*
-	 * For U2Basic, keep the device's existing FPGA state.
-	 * Only use the legacy FPGA upload path for devices that already
-	 * support it in upstream sigrok.
-	 */
-	if (strcmp(devc->profile->model, "DSLogic U2Basic") != 0) {
+	if (strcmp(devc->profile->model, "DSLogic U2Basic") == 0) {
+		const char *upload_u2basic = g_getenv("SIGROK_U2BASIC_UPLOAD_FPGA");
+		const gboolean force_upload = upload_u2basic && strcmp(upload_u2basic, "0") != 0;
+		if ((ret = dslogic_u2basic_ensure_fpga_configured(sdi, force_upload)) != SR_OK)
+			return ret;
+	} else {
 		if ((ret = dslogic_fpga_firmware_upload(sdi)) != SR_OK)
 			return ret;
 	}
@@ -379,8 +379,7 @@ static int dev_open(struct sr_dev_inst *sdi)
 
 	if (devc->cur_threshold == 0.0) {
 		devc->cur_threshold = thresholds[1][0];
-		if (strcmp(devc->profile->model, "DSLogic U2Basic") != 0)
-			return dslogic_set_voltage_threshold(sdi, devc->cur_threshold);
+		return dslogic_set_voltage_threshold(sdi, devc->cur_threshold);
 	}
 
 	return SR_OK;

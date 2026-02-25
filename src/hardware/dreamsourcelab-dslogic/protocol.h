@@ -52,6 +52,7 @@
 #define DSLOGIC_PRO_FPGA_FIRMWARE "dreamsourcelab-dslogic-pro-fpga.fw"
 #define DSLOGIC_PLUS_FPGA_FIRMWARE "dreamsourcelab-dslogic-plus-fpga.fw"
 #define DSLOGIC_BASIC_FPGA_FIRMWARE "dreamsourcelab-dslogic-basic-fpga.fw"
+#define DSLOGIC_U2BASIC_FPGA_FIRMWARE "dreamsourcelab-dslogic-u2basic-fpga.fw"
 
 enum dslogic_operation_modes {
 	DS_OP_NORMAL,
@@ -148,5 +149,7 @@ SR_PRIV int dslogic_dev_open(struct sr_dev_inst *sdi, struct sr_dev_driver *di);
 SR_PRIV struct dev_context *dslogic_dev_new(void);
 SR_PRIV int dslogic_acquisition_start(const struct sr_dev_inst *sdi);
 SR_PRIV int dslogic_acquisition_stop(struct sr_dev_inst *sdi);
+SR_PRIV int dslogic_u2basic_ensure_fpga_configured(const struct sr_dev_inst *sdi,
+		gboolean force_upload);
 
 #endif
