@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIBSIGROK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+RUNTIME_ROOT="$(cd "$LIBSIGROK_ROOT/../.." && pwd)"
+
+LIBDIR_64="$RUNTIME_ROOT/install/lib64"
+LIBDIR="$RUNTIME_ROOT/install/lib"
+if [[ -d "$LIBDIR_64" ]]; then
+  PATCHED_LIBDIR="$LIBDIR_64"
+elif [[ -d "$LIBDIR" ]]; then
+  PATCHED_LIBDIR="$LIBDIR"
+else
+  echo "No patched libsigrok install dir found under $RUNTIME_ROOT/install." >&2
+  echo "Build/install libsigrok first." >&2
+  exit 1
+fi
+
+DEFAULT_FW_DIR="$RUNTIME_ROOT/firmware/sigrok"
+export LD_LIBRARY_PATH="$PATCHED_LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export SIGROK_FIRMWARE_DIR="${SIGROK_FIRMWARE_DIR:-$DEFAULT_FW_DIR}"
+
+exec "${PULSEVIEW_BIN:-pulseview}" "$@"
