@@ -43,9 +43,19 @@ static const struct dslogic_profile supported_device[] = {
 	{ 0x2a0e, 0x0021, "DreamSourceLab", "DSLogic Basic", NULL,
 		"dreamsourcelab-dslogic-basic-fx2.fw",
 		0, "DreamSourceLab", "DSLogic", 256 * 1024},
+	/* DreamSourceLab DSLogic U2Basic */
+	{ 0x2a0e, 0x0029, "DreamSourceLab", "DSLogic U2Basic", NULL,
+		"dreamsourcelab-dslogic-basic-fx2.fw",
+		0, "DreamSourceLab", "DSLogic", 256 * 1024 * 1024},
 
 	ALL_ZERO
 };
+
+static gboolean has_configured_firmware(libusb_device *dev)
+{
+	return usb_match_manuf_prod(dev, "DreamSourceLab", "USB-based Instrument")
+		|| usb_match_manuf_prod(dev, "DreamSourceLab", "USB-based DSL Instrument v2");
+}
 
 static const uint32_t scanopts[] = {
 	SR_CONF_CONN,
@@ -255,7 +265,7 @@ static GSList *scan(struct sr_dev_driver *di, GSList *options)
 
 		devc->samplerates = samplerates;
 		devc->num_samplerates = ARRAY_SIZE(samplerates);
-		has_firmware = usb_match_manuf_prod(devlist[i], "DreamSourceLab", "USB-based Instrument");
+		has_firmware = has_configured_firmware(devlist[i]);
 
 		if (has_firmware) {
 			/* Already has the firmware, so fix the new address. */
@@ -352,8 +362,15 @@ static int dev_open(struct sr_dev_inst *sdi)
 	}
 
 
-	if ((ret = dslogic_fpga_firmware_upload(sdi)) != SR_OK)
-		return ret;
+	if (strcmp(devc->profile->model, "DSLogic U2Basic") == 0) {
+		const char *upload_u2basic = g_getenv("SIGROK_U2BASIC_UPLOAD_FPGA");
+		const gboolean force_upload = upload_u2basic && strcmp(upload_u2basic, "0") != 0;
+		if ((ret = dslogic_u2basic_ensure_fpga_configured(sdi, force_upload)) != SR_OK)
+			return ret;
+	} else {
+		if ((ret = dslogic_fpga_firmware_upload(sdi)) != SR_OK)
+			return ret;
+	}
 
 	if (devc->cur_samplerate == 0) {
 		/* Samplerate hasn't been set; default to the slowest one. */
